@@ -1,3 +1,4 @@
+console.log("SUPABASE BUILD ACTIVE");
 import "./style.css";
 import { supabase } from "./supabaseClient";
 
