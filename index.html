@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sky Source — Policy Checklist</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+
+</head>
+<body>
+
+<!-- ══ LOGIN ═════════════════════════════════════════════ -->
+<div class="screen active" id="screen-login">
+  <div class="login-canvas">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+    <div class="login-grid-overlay"></div>
+    <div class="login-noise"></div>
+  </div>
+
+  <div class="login-split">
+    <div class="login-brand-side">
+      <div class="login-brand-logo">🛡</div>
+      <div class="login-brand-name">Sky<span>Source</span><br>Checklist</div>
+      <div class="login-brand-desc">Professional insurance policy verification — compare policy documents against Nexsure data with precision.</div>
+      <div class="login-features">
+        <div class="login-feature"><div class="login-feature-dot"></div>Multi-LOB checklist management</div>
+        <div class="login-feature"><div class="login-feature-dot"></div>Real-time Nexsure comparison</div>
+        <div class="login-feature"><div class="login-feature-dot"></div>PDF & Excel export with policy header</div>
+        <div class="login-feature"><div class="login-feature-dot"></div>Snapshot comparison tool</div>
+        <div class="login-feature"><div class="login-feature-dot"></div>Admin panel with user management</div>
+      </div>
+    </div>
+
+    <div class="login-card">
+      <div class="login-card-header">
+        <div class="login-card-title">Welcome back</div>
+        <div class="login-card-sub">Sign in to your workspace</div>
+      </div>
+      <div class="login-card-body">
+        <div class="login-err" id="login-err">⚠ Invalid username or password</div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <div class="form-input-wrap">
+            <span class="form-input-icon">👤</span>
+            <input class="form-input" id="login-user" type="text" placeholder="Enter your username" autocomplete="off"/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <div class="form-input-wrap">
+            <span class="form-input-icon">🔑</span>
+            <input class="form-input" id="login-pass" type="password" placeholder="Enter your password"/>
+          </div>
+        </div>
+        <button class="btn-login" onclick="doLogin()" id="login-btn">
+          Sign In →
+        </button>
+        <div style="text-align:center;font-size:12px;color:rgba(255,255,255,.25);margin-top:18px;">Secure Insurance Workflow Platform</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ APP ════════════════════════════════════════════════ -->
+<div class="screen" id="screen-app">
+  <!-- Topnav -->
+  <nav class="topnav">
+    <div class="topnav-brand">
+      <span class="topnav-icon">🛡</span>
+      <span class="topnav-name">Sky<span>Source</span></span>
+    </div>
+    <div class="topnav-links">
+      <button class="nav-link active" id="nav-dash" onclick="showTab('dashboard')">📋 Checklists</button>
+      <button class="nav-link" id="nav-new" onclick="showTab('new-checklist')">＋ New Checklist</button>
+      <button class="nav-link" id="nav-admin" onclick="showTab('admin')" style="display:none">🛡 Admin Panel</button>
+    </div>
+    <div class="topnav-right">
+      <div class="user-avatar" id="user-avatar">A</div>
+      <span class="user-badge" id="user-badge-name">Rudra</span>
+      <span class="admin-chip" id="admin-chip" style="display:none">ADMIN</span>
+      <button class="btn-logout" onclick="doLogout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- Dashboard -->
+  <div id="tab-dashboard" class="main-content fade-in">
+    <div class="page-header">
+      <div>
+        <div class="page-title" id="dash-greeting">Good morning 👋</div>
+        <div class="page-sub">Here's what's happening across your checklists</div>
+      </div>
+      <button class="btn-primary" onclick="showTab('new-checklist')">＋ New Checklist</button>
+    </div>
+
+    <!-- Recently completed -->
+    <div class="recent-section" id="recent-section" style="display:none">
+      <div class="recent-title">🕐 Recently Completed <span style="font-size:11px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;">(disappears after 5 days)</span></div>
+      <div class="recent-strip" id="recent-strip"></div>
+    </div>
+
+    <!-- Search & filters -->
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input class="search-input" id="search-input" placeholder="Search by insured name, policy number…" oninput="filterChecklists(this.value)"/>
+    </div>
+    <div class="cl-filters">
+      <button class="cl-filter-btn active" data-filter="all" onclick="setFilter(this,'all')">All</button>
+      <button class="cl-filter-btn" data-filter="draft" onclick="setFilter(this,'draft')">Draft</button>
+      <button class="cl-filter-btn" data-filter="complete" onclick="setFilter(this,'complete')">Complete</button>
+    </div>
+    <div class="checklist-grid" id="checklist-grid"></div>
+  </div>
+
+  <!-- New Checklist -->
+  <div id="tab-new-checklist" class="main-content fade-in" style="display:none">
+    <div style="max-width:720px;margin:0 auto">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:26px">
+        <button class="back-btn" onclick="showTab('dashboard')">← Back</button>
+        <div><div class="page-title" style="font-size:20px">New Checklist</div><div class="page-sub">Fill in the policy information to get started</div></div>
+      </div>
+      <div class="header-panel" style="border-radius:18px;padding:30px">
+        <div class="panel-title"><span class="panel-icon">📄</span> Policy Information</div>
+        <div class="header-grid">
+          <div><div class="hf-label">Insured Name <span class="hf-required">*</span></div><input class="hf-input" id="new-insured" placeholder="e.g. Sunrise Logistics LLC"/></div>
+          <div><div class="hf-label">Policy Number</div><input class="hf-input" id="new-policy" placeholder="e.g. GL-2024-00142"/></div>
+          <div><div class="hf-label">Policy Term</div><input class="hf-input" id="new-term" placeholder="01/01/2024 – 01/01/2025"/></div>
+          <div><div class="hf-label">Date Checked</div><input class="hf-input" id="new-date" type="date"/></div>
+          <div><div class="hf-label">Checked By</div><input class="hf-input" id="new-checkedby" placeholder="Your name"/></div>
+          <div><div class="hf-label">Account Manager</div><input class="hf-input" id="new-am" placeholder="Account manager name"/></div>
+          <div class="hf-col-span" style="grid-column:span 2">
+            <div class="hf-label">Line of Business (LOB) <span class="hf-required">*</span></div>
+            <select class="hf-input" id="new-lob" style="appearance:auto">
+              <option value="">— Select LOB —</option>
+            </select>
+          </div>
+        </div>
+        <div id="new-lob-note" style="margin-top:10px;font-size:12px;color:var(--muted);display:none">
+          📌 <strong>Common Declarations</strong> and <strong>Notes</strong> sections are automatically included in all checklists.
+        </div>
+        <div style="display:flex;gap:12px;margin-top:24px;justify-content:flex-end">
+          <button class="btn-sm btn-outline" onclick="showTab('dashboard')">Cancel</button>
+          <button class="btn-sm btn-filled" onclick="createChecklist()" style="padding:10px 22px;font-size:13px">📄 Create Checklist →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Editor -->
+  <div id="tab-editor" class="fade-in" style="display:none;flex-direction:column">
+    <div class="sticky-bar">
+      <div class="sticky-top-row">
+        <div style="display:flex;align-items:center;gap:14px">
+          <button class="back-btn" onclick="showTab('dashboard')">← Back</button>
+          <div>
+            <div class="editor-title" id="editor-title-name">Checklist</div>
+            <div class="editor-policy" id="editor-title-policy">—</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span class="save-indicator" id="save-indicator">✓ Saved</span>
+          <div class="export-row">
+            <div class="download-dropdown-wrap" id="preview-dropdown">
+              <button class="btn-sm btn-outline" onclick="toggleDropdown('preview-dropdown')">👁 Preview ▾</button>
+              <div class="download-menu">
+                <div class="download-menu-item" onclick="showPreview('clean');toggleDropdown('preview-dropdown')">📄 Clean Preview</div>
+                <div class="download-menu-item" onclick="showPreview('excel');toggleDropdown('preview-dropdown')">📊 Excel Preview</div>
+                <div class="download-menu-item" onclick="showPreview('combined');toggleDropdown('preview-dropdown')">🖼 Checklist + Snapshots</div>
+              </div>
+            </div>
+            <div class="download-dropdown-wrap" id="download-dropdown">
+              <button class="btn-sm btn-filled" onclick="toggleDropdown('download-dropdown')">⬇ Download ▾</button>
+              <div class="download-menu">
+                <div class="download-menu-item" onclick="downloadAs('clean');toggleDropdown('download-dropdown')">📄 Clean PDF</div>
+                <div class="download-menu-item" onclick="downloadAs('excel');toggleDropdown('download-dropdown')">📊 Excel-Style PDF</div>
+                <div class="download-menu-item" onclick="downloadAs('combined');toggleDropdown('download-dropdown')">🖼 With Snapshots PDF</div>
+              </div>
+            </div>
+            <button class="btn-sm btn-success" onclick="markComplete()">✓ Mark Complete</button>
+            <button class="btn-sm btn-danger" onclick="resetEditor()">↺ Reset</button>
+          </div>
+        </div>
+      </div>
+      <div class="sticky-tabs">
+        <button class="tab-btn active" id="editor-tab-checklist" onclick="switchEditorTab('checklist')">📋 Checklist</button>
+        <button class="tab-btn" id="editor-tab-snapshots" onclick="switchEditorTab('snapshots')">🖼 Snapshots</button>
+      </div>
+    </div>
+
+    <div id="editor-panel-checklist" class="main-content" style="padding-top:18px">
+      <div id="complete-banner" class="complete-banner" style="display:none">
+        ✅ This checklist has been marked complete and added to your recent completions for 5 days.
+      </div>
+      <!-- Policy Header -->
+      <div class="header-panel">
+        <div class="panel-title"><span class="panel-icon">📄</span> Policy Header</div>
+        <div class="header-grid">
+          <div><div class="hf-label">Insured Name</div><input class="hf-input" id="ed-insured"/></div>
+          <div><div class="hf-label">Policy Number</div><input class="hf-input" id="ed-policy"/></div>
+          <div><div class="hf-label">Policy Term</div><input class="hf-input" id="ed-term"/></div>
+          <div><div class="hf-label">Date Checked</div><input class="hf-input" type="date" id="ed-date"/></div>
+          <div><div class="hf-label">Checked By</div><input class="hf-input" id="ed-checkedby"/></div>
+          <div><div class="hf-label">Account Manager</div><input class="hf-input" id="ed-am"/></div>
+          <div style="grid-column:span 2"><div class="hf-label">LOB</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span style="font-size:13px;font-weight:600;color:var(--vivid)" id="ed-lob-display">PKG</span>
+              <button class="btn-sm btn-outline" onclick="openModal('lob-modal')" style="font-size:11px;padding:5px 11px">✏ Change / Add LOB</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="pkg-tags" id="ed-lob-tags"></div>
+        </div>
+        <!-- Progress -->
+        <div style="margin-top:14px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px">
+            <span>Completion Progress</span>
+            <span id="progress-label">0%</span>
+          </div>
+          <div class="progress-wrap"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+        </div>
+      </div>
+      <!-- LOB Sections -->
+      <div id="coverage-sections"></div>
+      <!-- Notes section (always present) -->
+      <div class="note-section" id="notes-section">
+        <div class="note-header">
+          <span style="font-size:16px">📝</span>
+          <span class="note-title">Notes</span>
+        </div>
+        <div class="note-body">
+          <textarea class="note-textarea" id="checklist-notes" placeholder="Add any important notes, observations or follow-up items here…" rows="4"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div id="editor-panel-snapshots" class="main-content" style="padding-top:18px;display:none">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+        <div><div class="page-title" style="font-size:18px">Comparison Snapshots</div><div class="page-sub">Upload policy and Nexsure screenshots for side-by-side comparison</div></div>
+        <button class="btn-primary" onclick="addSnapshot()">＋ Add Snapshot</button>
+      </div>
+      <div id="snapshots-container"></div>
+    </div>
+  </div>
+
+  <!-- Admin Panel -->
+  <div id="tab-admin" class="main-content fade-in" style="display:none">
+    <div class="page-header" style="margin-bottom:28px">
+      <div><div class="page-title">🛡 Admin Panel</div><div class="page-sub">Manage users, LOBs, and system settings</div></div>
+    </div>
+    <div class="admin-tab-bar">
+      <button class="admin-tab-btn active" id="admin-tab-stats" onclick="switchAdminTab('stats')">📊 Dashboard</button>
+      <button class="admin-tab-btn" id="admin-tab-users" onclick="switchAdminTab('users')">👥 Users</button>
+      <button class="admin-tab-btn" id="admin-tab-lobs" onclick="switchAdminTab('lobs')">📋 LOBs</button>
+      <button class="admin-tab-btn" id="admin-tab-credentials" onclick="switchAdminTab('credentials')">🔑 Credentials</button>
+    </div>
+
+    <div id="admin-panel-stats">
+      <div class="stat-grid" id="admin-stat-grid"></div>
+      <div class="section-wrap" style="border-radius:var(--radius)">
+        <div style="padding:18px 20px;border-bottom:1px solid var(--border)"><b style="font-size:15px">Recent Checklists</b></div>
+        <table class="admin-table" id="admin-recent-table">
+          <thead><tr><th>Insured</th><th>User</th><th>LOB</th><th>Status</th><th>Updated</th></tr></thead>
+          <tbody id="admin-recent-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="admin-panel-users" style="display:none">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
+        <button class="btn-primary" onclick="openModal('add-user-modal')">＋ Add User</button>
+      </div>
+      <div class="section-wrap" style="border-radius:var(--radius)">
+        <table class="admin-table">
+          <thead><tr><th>Username</th><th>Full Name</th><th>Email</th><th>Role</th><th>Created</th><th></th></tr></thead>
+          <tbody id="admin-users-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="admin-panel-lobs" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+          <div style="font-size:14px;font-weight:700">Lines of Business</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Add or manage LOBs available in the checklist creator</div>
+        </div>
+        <button class="btn-primary" onclick="openModal('add-lob-modal')">＋ Add LOB</button>
+      </div>
+      <div id="lob-manage-list"></div>
+    </div>
+
+    <div id="admin-panel-credentials" style="display:none">
+      <div class="header-panel" style="max-width:480px">
+        <div class="panel-title"><span class="panel-icon">🔑</span> Admin Credentials</div>
+        <div class="form-group" style="margin-bottom:0">
+          <div class="hf-label" style="margin-bottom:5px">Admin Username</div>
+          <input class="hf-input" id="cred-username" style="margin-bottom:12px"/>
+          <div class="hf-label" style="margin-bottom:5px">Admin Password</div>
+          <input class="hf-input" id="cred-password" type="password" style="margin-bottom:16px"/>
+          <button class="btn-sm btn-filled" onclick="saveCredentials()" style="padding:10px 20px;font-size:13px">Save Credentials</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div><!-- end screen-app -->
+
+<!-- ══ MODALS ════════════════════════════════════════════ -->
+
+<!-- PKG/LOB Selection Modal (editor) -->
+<div class="modal-overlay" id="lob-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div><div class="modal-title">Select LOBs for Checklist</div><div style="font-size:12px;opacity:.6;margin-top:2px">Common Declarations always included</div></div>
+      <button class="modal-close" onclick="closeModal('lob-modal')">×</button>
+    </div>
+    <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
+      <input class="modal-search" placeholder="Search LOBs…" oninput="filterLobModal(this.value)" id="lob-modal-search"/>
+    </div>
+    <div class="modal-list" id="lob-modal-list"></div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('lob-modal')">Cancel</button>
+      <button class="btn-modal-apply" id="lob-modal-apply" onclick="applyLobSelection()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Checklist LOB Selection Modal -->
+<div class="modal-overlay" id="new-lob-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">Select LOBs</div>
+      <button class="modal-close" onclick="closeModal('new-lob-modal')">×</button>
+    </div>
+    <div class="modal-list" id="new-lob-modal-list"></div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('new-lob-modal')">Cancel</button>
+      <button class="btn-modal-apply" onclick="applyNewLobSelection()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal-overlay" id="add-user-modal">
+  <div class="modal-box" style="width:400px">
+    <div class="modal-header">
+      <div class="modal-title" id="user-modal-title">Add User</div>
+      <button class="modal-close" onclick="closeModal('add-user-modal')">×</button>
+    </div>
+    <div class="user-form">
+      <input type="hidden" id="edit-user-index"/>
+      <div><div class="hf-label" style="margin-bottom:5px">Username</div><input class="hf-input" id="uf-username" placeholder="username"/></div>
+      <div><div class="hf-label" style="margin-bottom:5px">Full Name</div><input class="hf-input" id="uf-fullname" placeholder="Full Name"/></div>
+      <div><div class="hf-label" style="margin-bottom:5px">Email</div><input class="hf-input" id="uf-email" type="email" placeholder="email@company.com"/></div>
+      <div><div class="hf-label" style="margin-bottom:5px">Password</div><input class="hf-input" id="uf-password" type="password" placeholder="Password"/></div>
+      <div><div class="hf-label" style="margin-bottom:5px">Role</div>
+        <select class="hf-input" id="uf-role" style="appearance:auto">
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('add-user-modal')">Cancel</button>
+      <button class="btn-modal-apply" onclick="saveUser()">Save User</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add LOB Modal -->
+<div class="modal-overlay" id="add-lob-modal">
+  <div class="modal-box" style="width:400px">
+    <div class="modal-header">
+      <div class="modal-title">Add New LOB</div>
+      <button class="modal-close" onclick="closeModal('add-lob-modal')">×</button>
+    </div>
+    <div class="user-form">
+      <div><div class="hf-label" style="margin-bottom:5px">LOB Name</div><input class="hf-input" id="new-lob-name" placeholder="e.g. Cyber Liability"/></div>
+      <div><div class="hf-label" style="margin-bottom:5px">Short Code</div><input class="hf-input" id="new-lob-code" placeholder="e.g. CY" style="text-transform:uppercase" maxlength="6"/></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('add-lob-modal')">Cancel</button>
+      <button class="btn-modal-apply" onclick="addNewLOB()">Add LOB</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOB Fields Editor Modal -->
+<div class="modal-overlay" id="lob-fields-modal">
+  <div class="modal-box" style="width:520px;max-height:88vh">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="lob-fields-modal-title">Edit Fields</div>
+        <div style="font-size:12px;opacity:.6;margin-top:2px">Drag to reorder • Add or remove fields for this LOB</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('lob-fields-modal')">×</button>
+    </div>
+    <div class="lob-fields-modal-body" id="lob-fields-modal-body"></div>
+    <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="addLobField(false)" style="flex:1;padding:9px;border:1.5px dashed #d0c8ff;border-radius:9px;background:none;color:var(--vivid);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s" onmouseover="this.style.background='var(--pale)'" onmouseout="this.style.background='none'">＋ Add Field</button>
+      <button onclick="addLobField(true)" style="flex:1;padding:9px;border:1.5px dashed #fcd34d;border-radius:9px;background:none;color:#92400e;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s" onmouseover="this.style.background='#fef9c3'" onmouseout="this.style.background='none'">＋ Add Section Header</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal('lob-fields-modal')">Cancel</button>
+      <button class="btn-modal-apply" onclick="saveLobFields()">Save Fields</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preview Modal -->
+<div class="modal-overlay" id="preview-modal" style="z-index:300">
+  <div class="modal-box" style="width:92vw;max-width:1100px;max-height:92vh">
+    <div class="modal-header">
+      <div class="modal-title" id="preview-title">Preview</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.2);font-size:12px" onclick="printChecklist()">🖨 Print</button>
+        <button class="modal-close" onclick="closeModal('preview-modal')">×</button>
+      </div>
+    </div>
+    <div style="flex:1;overflow:auto" id="preview-body"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Print area -->
+<div id="print-area"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
