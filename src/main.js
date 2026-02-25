@@ -265,7 +265,7 @@ async function deleteChecklistFromDb(id) {
 // ══════════════════════════════════════════
 
 async function doLogin() {
-  const email = document.getElementById("login-user").value.trim();
+  const loginId = document.getElementById("login-user").value.trim(); // can be username OR email
   const password = document.getElementById("login-pass").value;
   const err = document.getElementById("login-err");
   const btn = document.getElementById("login-btn");
@@ -276,9 +276,36 @@ async function doLogin() {
   try {
     btn.disabled = true;
 
+    // 1) Determine email
+    let email = loginId.includes("@") ? loginId : null;
+
+    // 2) If user typed username, fetch email from profiles
+    if (!email) {
+      const { data: prof, error: pErr } = await supabase
+        .from("profiles")
+        .select("email")
+        .ilike("username", loginId) // case-insensitive match
+        .single();
+
+      if (pErr || !prof?.email) {
+        err.textContent = "Invalid username or password";
+        err.classList.add("show");
+        btn.style.background = "linear-gradient(135deg,#dc2626,#b91c1c)";
+        setTimeout(() => {
+          err.classList.remove("show");
+          btn.style.background = "";
+        }, 2500);
+        return;
+      }
+
+      email = prof.email;
+    }
+
+    // 3) Supabase login always uses email + password
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
     if (error || !data?.user) {
-      err.textContent = "Invalid email or password";
+      err.textContent = "Invalid username/email or password";
       err.classList.add("show");
       btn.style.background = "linear-gradient(135deg,#dc2626,#b91c1c)";
       setTimeout(() => {
