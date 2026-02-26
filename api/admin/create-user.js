@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import jwt from "jsonwebtoken";
 
 function getBearerToken(req) {
   const h = req.headers.authorization || "";
@@ -7,18 +6,19 @@ function getBearerToken(req) {
   return m ? m[1] : null;
 }
 
-async function isAdminFromJwtAndDb({ supabaseAdmin, token }) {
-  const decoded = jwt.verify(token, process.env.SUPABASE_JWT_SECRET);
-  const userId = decoded?.sub;
-  if (!userId) return { ok: false };
+async function requireAdmin({ supabaseAdmin, token }) {
+  const { data: u, error: uErr } = await supabaseAdmin.auth.getUser(token);
+  if (uErr || !u?.user) return { ok: false };
 
-  const { data: prof, error } = await supabaseAdmin
+  const userId = u.user.id;
+
+  const { data: prof, error: pErr } = await supabaseAdmin
     .from("profiles")
     .select("role")
     .eq("id", userId)
     .single();
 
-  if (error) return { ok: false };
+  if (pErr) return { ok: false };
   return { ok: prof?.role === "admin", userId };
 }
 
@@ -29,12 +29,9 @@ export default async function handler(req, res) {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ error: "Missing bearer token" });
 
-    const supabaseAdmin = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-    const adminCheck = await isAdminFromJwtAndDb({ supabaseAdmin, token });
+    const adminCheck = await requireAdmin({ supabaseAdmin, token });
     if (!adminCheck.ok) return res.status(403).json({ error: "Admin only" });
 
     const { email, password, username, full_name, role } = req.body || {};
@@ -46,7 +43,7 @@ export default async function handler(req, res) {
     const { data: created, error: cErr } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true,
+      email_confirm: true
     });
     if (cErr) return res.status(400).json({ error: cErr.message });
 
@@ -58,13 +55,13 @@ export default async function handler(req, res) {
       email,
       username,
       role: role === "admin" ? "admin" : "user",
-      full_name: full_name || null,
+      full_name: full_name || null
     });
 
     if (pErr) return res.status(400).json({ error: pErr.message });
 
     return res.status(200).json({ ok: true, user_id: newUserId });
   } catch (e) {
-    return res.status(500).json({ error: e.message || "Server error" });
+    return res.status(500).json({ error: e?.message || "Server error" });
   }
 }
