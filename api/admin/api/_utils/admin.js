@@ -1,27 +1,42 @@
+// api/utils/admin.js
 import { createClient } from "@supabase/supabase-js";
 
-export const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const url = process.env.SUPABASE_URL;
+const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!url || !service) {
+  console.error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY env vars");
+}
+
+export const supabaseAdmin = createClient(url, service, {
+  auth: { persistSession: false },
+});
 
 export async function requireAdmin(req) {
-  const token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token) return { ok: false, status: 401, error: "Missing Bearer token" };
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-  const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
-  const user = userData?.user;
-  if (userErr || !user) return { ok: false, status: 401, error: "Invalid token" };
+    if (!token) return { ok: false, status: 401, error: "Missing bearer token" };
 
-  const { data: profile, error: profErr } = await supabaseAdmin
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+    // Validate the JWT and fetch user
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !data?.user) return { ok: false, status: 401, error: "Invalid session" };
 
-  if (profErr) return { ok: false, status: 500, error: "Profile read failed" };
-  if ((profile?.role || "").toLowerCase() !== "admin")
-    return { ok: false, status: 403, error: "Not authorized" };
+    const user = data.user;
 
-  return { ok: true, user };
+    // Check role in profiles
+    const { data: profile, error: pErr } = await supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (pErr) return { ok: false, status: 500, error: pErr.message };
+    if ((profile?.role || "user") !== "admin") return { ok: false, status: 403, error: "Admin only" };
+
+    return { ok: true, status: 200, user };
+  } catch (e) {
+    return { ok: false, status: 500, error: e?.message || "requireAdmin failed" };
+  }
 }
