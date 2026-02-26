@@ -390,12 +390,26 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  currentUser = null;
-  activeChecklistId = null;
-  CHECKLISTS = [];
-  await supabase.auth.signOut();
-  goTo("login");
+  try {
+    currentUser = null;
+    activeChecklistId = null;
+    CHECKLISTS = [];
+
+    // best-effort signOut
+    const { error } = await supabase.auth.signOut();
+    if (error) console.warn("signOut error:", error);
+
+  } catch (e) {
+    console.warn("logout exception:", e);
+  } finally {
+    // force UI reset no matter what
+    goTo("login");
+
+    // optional hard reset if UI still stuck:
+    // window.location.reload();
+  }
 }
+
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && el("screen-login")?.classList.contains("active")) {
