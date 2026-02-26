@@ -294,7 +294,7 @@ async function deleteChecklistFromDb(id) {
 // ══════════════════════════════════════════
 
 async function doLogin() {
-  const loginId = document.getElementById("login-user").value.trim(); // username OR email
+  const login = document.getElementById("login-user").value.trim(); // email or username
   const password = document.getElementById("login-pass").value;
   const err = document.getElementById("login-err");
   const btn = document.getElementById("login-btn");
@@ -305,36 +305,35 @@ async function doLogin() {
   try {
     btn.disabled = true;
 
-    let email = loginId.includes("@") ? loginId : "";
+    let email = login;
 
-    // If username, resolve it via Vercel API (service-role)
-    if (!email) {
-      const resp = await fetch("/api/admin/resolve-username", {
+    // If it's not an email, treat it as username and resolve via API
+    if (!login.includes("@")) {
+      const r = await fetch("/api/auth/resolve-username", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: loginId }),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: login }),
       });
 
-      const json = await resp.json();
-      if (!resp.ok || !json?.email) {
+      const j = await r.json();
+      if (!r.ok) {
         err.textContent = "Invalid username or password";
         err.classList.add("show");
         return;
       }
-      email = json.email;
+      email = j.email;
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error || !data?.user) {
-      err.textContent = "Invalid username/email or password";
+      err.textContent = "Invalid email/username or password";
       err.classList.add("show");
       return;
     }
 
     currentUser = await buildCurrentUserFromSupabase(data.user);
-
-    await initAppData(); // load lobs/fields/checklists
+    await initAppData();
     setupUI();
     goTo("dashboard");
   } catch (e) {
