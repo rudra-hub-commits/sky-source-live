@@ -115,14 +115,17 @@ async function loadLobsFromDb() {
   if (error) throw error;
 
   ALL_LOBS = (data || []).map((l) => ({
-    id: l.id,
-    name: l.name,
-    is_active: l.is_active,
-    - locked: String(l.name).toLowerCase() === "common declarations",
-+ locked: String(l.name).trim().toLowerCase() === "common declarations", // lock Common Declarations
-    code: (l.name || "").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 4),
-  }));
-
+  id: l.id,
+  name: l.name,
+  is_active: l.is_active,
+  locked: String(l.name).trim().toLowerCase() === "common declarations", // lock Common Declarations
+  code: (l.name || "")
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 4),
+}));
   LOBS_BY_ID = new Map(ALL_LOBS.map((l) => [l.id, l]));
   LOBS_BY_NAME = new Map(ALL_LOBS.map((l) => [l.name, l]));
 }
@@ -135,8 +138,8 @@ async function loadLobFieldsFromDb() {
 
   if (error) throw error;
 
-- COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || {});
-+ COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || []);
+  COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || {});
+  COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || []);
 }
 
 async function loadChecklistsFromDb() {
