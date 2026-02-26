@@ -84,3 +84,28 @@ export default async function handler(req, res) {
   }
 
 }
+
+import { supabaseAdmin, requireAdmin } from "../_utils/admin";
+
+export default async function handler(req, res) {
+  try {
+    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+    const adminCheck = await requireAdmin(req);
+    if (!adminCheck.ok) return res.status(adminCheck.status).json({ error: adminCheck.error });
+
+    const { userId, role } = req.body || {};
+    if (!userId || !role) return res.status(400).json({ error: "userId and role are required" });
+
+    const { error } = await supabaseAdmin
+      .from("profiles")
+      .update({ role })
+      .eq("id", userId);
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || "Server error" });
+  }
+}
