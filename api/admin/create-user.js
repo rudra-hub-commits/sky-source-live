@@ -1,106 +1,28 @@
-import { createClient } from "@supabase/supabase-js";
-
-function getBearerToken(req) {
-  const h = req.headers.authorization || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
-}
-
-async function requireAdmin({ supabaseAdmin, token }) {
-  const { data: u, error: uErr } = await supabaseAdmin.auth.getUser(token);
-  if (uErr || !u?.user) return { ok: false };
-
-  const userId = u.user.id;
-
-  const { data: prof, error: pErr } = await supabaseAdmin
-    .from("profiles")
-    .select("role")
-    .eq("id", userId)
-    .single();
-
-  if (pErr) return { ok: false };
-  return { ok: prof?.role === "admin", userId };
-}
+import { supabaseAdmin, requireAdmin } from "../_utils/admin";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  try {
-    const token = getBearerToken(req);
-    if (!token) return res.status(401).json({ error: "Missing bearer token" });
+  const admin = await requireAdmin(req);
+  if (!admin.ok) return res.status(admin.status).json({ error: admin.error });
 
-    const supabaseAdmin = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const { email, password, role = "user" } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: "email and password required" });
 
-    const adminCheck = await requireAdmin({ supabaseAdmin, token });
-    if (!adminCheck.ok) return res.status(403).json({ error: "Admin only" });
+  const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
 
-    const { email, password, username, full_name, role } = req.body || {};
-    if (!email || !password || !username) {
-      return res.status(400).json({ error: "email, password, username are required" });
-    }
+  if (error) return res.status(400).json({ error: error.message });
 
-    // 1) Create auth user
-    const { data: created, error: cErr } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true
-    });
-    if (cErr) return res.status(400).json({ error: cErr.message });
+  // ensure profile role
+  await supabaseAdmin.from("profiles").upsert({
+    id: data.user.id,
+    email,
+    role,
+  });
 
-    const newUserId = created.user.id;
-
-    // 2) Insert profile
-    const { error: pErr } = await supabaseAdmin.from("profiles").upsert({
-      id: newUserId,
-      email,
-      username,
-      role: role === "admin" ? "admin" : "user",
-      full_name: full_name || null
-    });
-
-    if (pErr) return res.status(400).json({ error: pErr.message });
-
-    return res.status(200).json({ ok: true, user_id: newUserId });
-  } catch (e) {
-    return res.status(500).json({ error: e?.message || "Server error" });
-  }
-}
-
-import { supabaseAdmin, requireAdmin } from "../_utils/admin";
-
-export default async function handler(req, res) {
-  try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-    const adminCheck = await requireAdmin(req);
-    if (!adminCheck.ok) return res.status(adminCheck.status).json({ error: adminCheck.error });
-
-    const { email, password, role = "user", username = null, full_name = null } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: "email and password are required" });
-
-    // Create auth user
-    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
-    if (createErr) return res.status(400).json({ error: createErr.message });
-
-    const userId = created?.user?.id;
-
-    // Create/Upsert profile
-    const { error: profErr } = await supabaseAdmin.from("profiles").upsert({
-      id: userId,
-      email,
-      role,
-      username,
-      full_name,
-    });
-
-    if (profErr) return res.status(400).json({ error: profErr.message });
-
-    return res.json({ success: true, userId });
-  } catch (e) {
-    return res.status(500).json({ error: e.message || "Server error" });
-  }
+  return res.json({ success: true, userId: data.user.id });
 }
