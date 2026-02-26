@@ -294,7 +294,7 @@ async function deleteChecklistFromDb(id) {
 // ══════════════════════════════════════════
 
 async function doLogin() {
-  const loginId = document.getElementById("login-user").value.trim(); // can be username OR email
+  const loginId = document.getElementById("login-user").value.trim(); // username OR email
   const password = document.getElementById("login-pass").value;
   const err = document.getElementById("login-err");
   const btn = document.getElementById("login-btn");
@@ -305,42 +305,30 @@ async function doLogin() {
   try {
     btn.disabled = true;
 
-    // 1) Determine email
-    let email = loginId.includes("@") ? loginId : null;
+    let email = loginId.includes("@") ? loginId : "";
 
-    // 2) If user typed username, fetch email from profiles
+    // If username, resolve it via Vercel API (service-role)
     if (!email) {
-      const { data: prof, error: pErr } = await supabase
-        .from("profiles")
-        .select("email")
-        .ilike("username", loginId) // case-insensitive match
-        .single();
+      const resp = await fetch("/api/admin/resolve-username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginId }),
+      });
 
-      if (pErr || !prof?.email) {
+      const json = await resp.json();
+      if (!resp.ok || !json?.email) {
         err.textContent = "Invalid username or password";
         err.classList.add("show");
-        btn.style.background = "linear-gradient(135deg,#dc2626,#b91c1c)";
-        setTimeout(() => {
-          err.classList.remove("show");
-          btn.style.background = "";
-        }, 2500);
         return;
       }
-
-      email = prof.email;
+      email = json.email;
     }
 
-    // 3) Supabase login always uses email + password
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error || !data?.user) {
       err.textContent = "Invalid username/email or password";
       err.classList.add("show");
-      btn.style.background = "linear-gradient(135deg,#dc2626,#b91c1c)";
-      setTimeout(() => {
-        err.classList.remove("show");
-        btn.style.background = "";
-      }, 2500);
       return;
     }
 
