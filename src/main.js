@@ -1,12 +1,12 @@
 console.log("SUPABASE BUILD ACTIVE");
 
-
 import "./style.css";
 import { supabase } from "./supabaseClient";
 
-// DEBUG
+// DEBUG (keep)
 window.supabase = supabase;
 console.log("✅ window.supabase set", supabase);
+
 // ══════════════════════════════════════════
 // HELPERS
 // ══════════════════════════════════════════
@@ -18,6 +18,27 @@ function esc(str = "") {
   });
 }
 
+function safeJsonParse(s, fallback = null) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return fallback;
+  }
+}
+
+function showEl(id, show) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = show ? "" : "none";
+}
+
+function el(id) {
+  return document.getElementById(id);
+}
+
+function isEmailLike(v) {
+  return String(v || "").includes("@");
+}
+
 // Convert lob_fields rows into UI-friendly structure:
 // COVERAGE_FIELDS["General Liability"] = [ {isHeader:true,label:"Section"}, {id,label}, ...]
 function buildCoverageFieldsFromDb(lobsById, lobFieldsRows) {
@@ -25,7 +46,7 @@ function buildCoverageFieldsFromDb(lobsById, lobFieldsRows) {
 
   // group by lob_id then by section
   const grouped = new Map(); // lob_id -> Map(section -> rows[])
-  for (const r of lobFieldsRows) {
+  for (const r of lobFieldsRows || []) {
     const lobId = r.lob_id;
     if (!grouped.has(lobId)) grouped.set(lobId, new Map());
     const section = r.section || "General";
@@ -39,11 +60,9 @@ function buildCoverageFieldsFromDb(lobsById, lobFieldsRows) {
     if (!lobName) continue;
 
     const arr = [];
-    // sort sections alphabetically for stability (or customize later)
     const sections = Array.from(secMap.keys()).sort((a, b) => a.localeCompare(b));
 
     for (const sectionName of sections) {
-      // header row
       arr.push({ id: `hdr-${lobId}-${sectionName}`, label: sectionName, isHeader: true });
 
       const rows = secMap.get(sectionName) || [];
@@ -63,13 +82,28 @@ function buildCoverageFieldsFromDb(lobsById, lobFieldsRows) {
 // Determine if current user is admin from profile role
 async function buildCurrentUserFromSupabase(user) {
   let role = "user";
+  let username = user?.email || "user";
+
   try {
     const { data: profile, error } = await supabase
       .from("profiles")
-      .select("role")
+      .select("role, username, full_name")
       .eq("id", user.id)
       .single();
+
     if (!error && profile?.role) role = profile.role;
+    if (!error && profile?.username) username = profile.username;
+    const fullname =
+      (!error && profile?.full_name) ||
+      (user.email || "User").split("@")[0];
+
+    return {
+      id: user.id,
+      email: user.email,
+      username,
+      fullname,
+      role,
+    };
   } catch (e) {
     console.warn("profiles lookup failed:", e);
   }
@@ -77,7 +111,7 @@ async function buildCurrentUserFromSupabase(user) {
   return {
     id: user.id,
     email: user.email,
-    username: user.email, // keep existing UI logic
+    username,
     fullname: (user.email || "User").split("@")[0],
     role,
   };
@@ -105,6 +139,11 @@ let activeChecklistId = null;
 let snapshotCount = 1;
 let lobModalSelectedIds = []; // PKG selection uses lob IDs
 
+// lob fields editor (admin)
+let activeLobForFieldEdit = null;
+let lobFieldsDraft = []; // [{id?, label, section, sort_order, is_header}]
+let lobFieldsDragIndex = null;
+
 // ══════════════════════════════════════════
 // DB: LOADERS
 // ══════════════════════════════════════════
@@ -119,17 +158,18 @@ async function loadLobsFromDb() {
   if (error) throw error;
 
   ALL_LOBS = (data || []).map((l) => ({
-  id: l.id,
-  name: l.name,
-  is_active: l.is_active,
-  locked: String(l.name).trim().toLowerCase() === "common declarations", // lock Common Declarations
-  code: (l.name || "")
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 4),
-}));
+    id: l.id,
+    name: l.name,
+    is_active: l.is_active,
+    locked: String(l.name).trim().toLowerCase() === "common declarations",
+    code: (l.name || "")
+      .split(" ")
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 4),
+  }));
+
   LOBS_BY_ID = new Map(ALL_LOBS.map((l) => [l.id, l]));
   LOBS_BY_NAME = new Map(ALL_LOBS.map((l) => [l.name, l]));
 }
@@ -142,13 +182,10 @@ async function loadLobFieldsFromDb() {
 
   if (error) throw error;
 
-  COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || {});
   COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || []);
 }
 
 async function loadChecklistsFromDb() {
-  // Admin can see all only if you add admin RLS policies.
-  // With the "minimum" user-only policies, this will show only own rows.
   const { data, error } = await supabase
     .from("checklists")
     .select("id, user_id, lob_id, title, data_json, created_at, updated_at")
@@ -170,7 +207,6 @@ async function loadChecklistsFromDb() {
     .in("checklist_id", checklistIds);
 
   if (joinErr) {
-    // If join table isn't created yet, fallback gracefully
     console.warn("checklist_lobs missing or blocked by RLS. PKG will fallback.", joinErr);
   }
 
@@ -184,12 +220,10 @@ async function loadChecklistsFromDb() {
     const dj = r.data_json || {};
 
     const lobIds = lobMapByChecklist.get(r.id) || (r.lob_id ? [r.lob_id] : []);
-    const lobNames = lobIds
-      .map((id) => LOBS_BY_ID.get(id)?.name)
-      .filter(Boolean);
+    const lobNames = lobIds.map((id) => LOBS_BY_ID.get(id)?.name).filter(Boolean);
 
     return {
-      id: r.id, // uuid
+      id: r.id,
       db_user_id: r.user_id,
       title: r.title || dj.insured || "Checklist",
       insured: dj.insured || "",
@@ -205,14 +239,14 @@ async function loadChecklistsFromDb() {
       user: dj.userEmail || currentUser?.username || "",
       lobs: lobNames.length ? lobNames : (dj.lobs || []),
       lob_ids: lobIds,
+      snapshots: dj.snapshots || [], // reserved
     };
   });
 }
 
 // ══════════════════════════════════════════
-// Add users
+// ADMIN API HELPERS
 // ══════════════════════════════════════════
-
 
 async function apiAdminCreateUser({ email, password, username, full_name, role }) {
   const { data: sess } = await supabase.auth.getSession();
@@ -241,7 +275,7 @@ async function upsertChecklistToDb(cl) {
   const payload = {
     id: cl.id || undefined,
     user_id: currentUser.id,
-    lob_id: cl.lob_ids?.[0] ?? null, // keep for compatibility / quick filtering
+    lob_id: cl.lob_ids?.[0] ?? null,
     title: cl.title || cl.insured || "Checklist",
     data_json: {
       insured: cl.insured || "",
@@ -255,11 +289,11 @@ async function upsertChecklistToDb(cl) {
       status: cl.status || "draft",
       userEmail: currentUser.username,
       lobs: cl.lobs || [],
+      snapshots: cl.snapshots || [],
     },
     updated_at: new Date().toISOString(),
   };
 
-  // Upsert checklist
   const { data, error } = await supabase
     .from("checklists")
     .upsert(payload)
@@ -273,7 +307,6 @@ async function upsertChecklistToDb(cl) {
   // Sync join table for LOBs (PKG)
   const lobIds = cl.lob_ids || [];
   if (lobIds.length) {
-    // delete existing rows and re-insert (simple + safe)
     await supabase.from("checklist_lobs").delete().eq("checklist_id", checklistId);
 
     const insertRows = lobIds.map((lobId) => ({
@@ -288,7 +321,6 @@ async function upsertChecklistToDb(cl) {
 }
 
 async function deleteChecklistFromDb(id) {
-  // cascade will remove join rows
   const { error } = await supabase.from("checklists").delete().eq("id", id);
   if (error) throw error;
 }
@@ -298,21 +330,23 @@ async function deleteChecklistFromDb(id) {
 // ══════════════════════════════════════════
 
 async function doLogin() {
-  const login = document.getElementById("login-user").value.trim(); // email or username
-  const password = document.getElementById("login-pass").value;
-  const err = document.getElementById("login-err");
-  const btn = document.getElementById("login-btn");
+  const login = el("login-user")?.value?.trim() || "";
+  const password = el("login-pass")?.value || "";
+  const err = el("login-err");
+  const btn = el("login-btn");
 
-  err.classList.remove("show");
-  err.textContent = "";
+  if (err) {
+    err.classList.remove("show");
+    err.textContent = "";
+  }
 
   try {
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
 
     let email = login;
 
     // If it's not an email, treat it as username and resolve via API
-    if (!login.includes("@")) {
+    if (!isEmailLike(login)) {
       const r = await fetch("/api/auth/resolve-username", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -321,8 +355,10 @@ async function doLogin() {
 
       const j = await r.json();
       if (!r.ok) {
-        err.textContent = "Invalid username or password";
-        err.classList.add("show");
+        if (err) {
+          err.textContent = "Invalid username or password";
+          err.classList.add("show");
+        }
         return;
       }
       email = j.email;
@@ -331,8 +367,10 @@ async function doLogin() {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error || !data?.user) {
-      err.textContent = "Invalid email/username or password";
-      err.classList.add("show");
+      if (err) {
+        err.textContent = "Invalid email/username or password";
+        err.classList.add("show");
+      }
       return;
     }
 
@@ -342,10 +380,12 @@ async function doLogin() {
     goTo("dashboard");
   } catch (e) {
     console.error(e);
-    err.textContent = "Login failed. Try again.";
-    err.classList.add("show");
+    if (err) {
+      err.textContent = "Login failed. Try again.";
+      err.classList.add("show");
+    }
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -358,7 +398,7 @@ async function doLogout() {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && document.getElementById("screen-login")?.classList.contains("active")) {
+  if (e.key === "Enter" && el("screen-login")?.classList.contains("active")) {
     doLogin();
   }
 });
@@ -378,22 +418,16 @@ async function initAppData() {
 // ══════════════════════════════════════════
 
 function setupUI() {
-  document.getElementById("user-badge-name").textContent =
-    currentUser.fullname || currentUser.username;
+  el("user-badge-name").textContent = currentUser.fullname || currentUser.username;
+  el("user-avatar").textContent = (currentUser.fullname || currentUser.username)[0].toUpperCase();
 
-  document.getElementById("user-avatar").textContent = (
-    currentUser.fullname || currentUser.username
-  )[0].toUpperCase();
-
-  document.getElementById("admin-chip").style.display = isAdmin() ? "" : "none";
-  document.getElementById("nav-admin").style.display = isAdmin() ? "" : "none";
+  showEl("admin-chip", isAdmin());
+  el("nav-admin").style.display = isAdmin() ? "" : "none";
 
   const h = new Date().getHours();
   const greet = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 
-  document.getElementById("dash-greeting").textContent = `${greet}, ${
-    (currentUser.fullname || currentUser.username).split(" ")[0]
-  } 👋`;
+  el("dash-greeting").textContent = `${greet}, ${(currentUser.fullname || currentUser.username).split(" ")[0]} 👋`;
 
   populateNewLobDropdown();
 }
@@ -405,57 +439,56 @@ function setupUI() {
 function goTo(screen) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   if (screen === "login") {
-    document.getElementById("screen-login").classList.add("active");
+    el("screen-login").classList.add("active");
   } else {
-    document.getElementById("screen-app").classList.add("active");
+    el("screen-app").classList.add("active");
     if (screen === "dashboard") showTab("dashboard");
   }
 }
 
 function showTab(tab) {
   ["dashboard", "new-checklist", "editor", "admin"].forEach((p) => {
-    const el = document.getElementById("tab-" + p);
-    if (el) el.style.display = "none";
+    const node = el("tab-" + p);
+    if (node) node.style.display = "none";
   });
   document.querySelectorAll(".nav-link").forEach((l) => l.classList.remove("active"));
 
   if (tab === "dashboard") {
-    document.getElementById("tab-dashboard").style.display = "";
-    document.getElementById("nav-dash").classList.add("active");
+    el("tab-dashboard").style.display = "";
+    el("nav-dash").classList.add("active");
     renderDashboard();
   } else if (tab === "new-checklist") {
-    document.getElementById("tab-new-checklist").style.display = "";
-    document.getElementById("nav-new").classList.add("active");
-    document.getElementById("new-date").value = new Date().toISOString().split("T")[0];
-    document.getElementById("new-checkedby").value =
-      currentUser?.fullname || currentUser?.username || "";
+    el("tab-new-checklist").style.display = "";
+    el("nav-new").classList.add("active");
+    el("new-date").value = new Date().toISOString().split("T")[0];
+    el("new-checkedby").value = currentUser?.fullname || currentUser?.username || "";
   } else if (tab === "editor") {
-    document.getElementById("tab-editor").style.display = "flex";
-    document.getElementById("nav-dash").classList.add("active");
+    el("tab-editor").style.display = "flex";
+    el("nav-dash").classList.add("active");
     renderEditor();
   } else if (tab === "admin") {
     if (!isAdmin()) {
       showToast("⛔ Admin access only");
       return;
     }
-    document.getElementById("tab-admin").style.display = "";
-    document.getElementById("nav-admin").classList.add("active");
+    el("tab-admin").style.display = "";
+    el("nav-admin").classList.add("active");
     renderAdmin();
   }
 }
 
 function switchEditorTab(tab) {
-  document.getElementById("editor-panel-checklist").style.display = tab === "checklist" ? "" : "none";
-  document.getElementById("editor-panel-snapshots").style.display = tab === "snapshots" ? "" : "none";
-  document.getElementById("editor-tab-checklist").classList.toggle("active", tab === "checklist");
-  document.getElementById("editor-tab-snapshots").classList.toggle("active", tab === "snapshots");
+  el("editor-panel-checklist").style.display = tab === "checklist" ? "" : "none";
+  el("editor-panel-snapshots").style.display = tab === "snapshots" ? "" : "none";
+  el("editor-tab-checklist").classList.toggle("active", tab === "checklist");
+  el("editor-tab-snapshots").classList.toggle("active", tab === "snapshots");
 }
 
 function switchAdminTab(tab) {
-  ["stats", "users", "lobs"].forEach((t) => {
-    const panel = document.getElementById("admin-panel-" + t);
+  ["stats", "users", "lobs", "credentials"].forEach((t) => {
+    const panel = el("admin-panel-" + t);
     if (panel) panel.style.display = t === tab ? "" : "none";
-    const btn = document.getElementById("admin-tab-" + t);
+    const btn = el("admin-tab-" + t);
     if (btn) btn.classList.toggle("active", t === tab);
   });
   if (tab === "lobs") renderLobManagement();
@@ -467,24 +500,22 @@ function switchAdminTab(tab) {
 // ══════════════════════════════════════════
 
 function renderDashboard() {
-  renderRecentStrip(); // DB-derived
-  renderChecklistGrid("");
+  renderRecentStrip();
+  renderChecklistGrid(el("search-input")?.value || "");
 }
 
 function getRecentCompleted() {
-  // DB-derived: completed checklists updated in last 5 days
   const fiveDaysMs = 5 * 24 * 60 * 60 * 1000;
   const now = Date.now();
-  return CHECKLISTS.filter((c) => {
-    if (c.status !== "complete") return false;
-    const t = new Date(c.updated).getTime();
-    return now - t < fiveDaysMs;
-  }).filter((c) => (isAdmin() ? true : c.user === currentUser.username));
+  return CHECKLISTS
+    .filter((c) => c.status === "complete")
+    .filter((c) => now - new Date(c.updated).getTime() < fiveDaysMs)
+    .filter((c) => (isAdmin() ? true : c.user === currentUser.username));
 }
 
 function renderRecentStrip() {
-  const section = document.getElementById("recent-section");
-  const strip = document.getElementById("recent-strip");
+  const section = el("recent-section");
+  const strip = el("recent-strip");
 
   const myRecent = getRecentCompleted();
   if (myRecent.length === 0) {
@@ -496,9 +527,7 @@ function renderRecentStrip() {
   strip.innerHTML = myRecent
     .slice(0, 12)
     .map((cl) => {
-      const daysLeft = Math.ceil(
-        (5 * 86400000 - (Date.now() - new Date(cl.updated).getTime())) / 86400000
-      );
+      const daysLeft = Math.ceil((5 * 86400000 - (Date.now() - new Date(cl.updated).getTime())) / 86400000);
       return `<div class="recent-card" onclick="openChecklist('${esc(cl.id)}')">
         <div class="recent-expire-badge">${daysLeft}d left</div>
         <div class="recent-card-insured">${esc(cl.insured)}</div>
@@ -510,14 +539,10 @@ function renderRecentStrip() {
 }
 
 function renderChecklistGrid(searchVal) {
-  const grid = document.getElementById("checklist-grid");
+  const grid = el("checklist-grid");
   let list = CHECKLISTS;
 
-  // Admin sees all ONLY if your RLS allows it; otherwise it will naturally be user-only
-  if (!isAdmin()) {
-    list = list.filter((c) => c.user === currentUser.username);
-  }
-
+  if (!isAdmin()) list = list.filter((c) => c.user === currentUser.username);
   if (currentFilter !== "all") list = list.filter((c) => c.status === currentFilter);
 
   if (searchVal) {
@@ -538,13 +563,8 @@ function renderChecklistGrid(searchVal) {
 
   grid.innerHTML = list
     .map((cl) => {
-      const lobDisplay =
-        cl.lobs.slice(0, 2).join(", ") + (cl.lobs.length > 2 ? ` +${cl.lobs.length - 2}` : "");
-      const date = new Date(cl.updated).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
+      const lobDisplay = cl.lobs.slice(0, 2).join(", ") + (cl.lobs.length > 2 ? ` +${cl.lobs.length - 2}` : "");
+      const date = new Date(cl.updated).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
       return `<div class="cl-card" onclick="openChecklist('${esc(cl.id)}')">
         <div class="cl-card-top">
@@ -552,17 +572,13 @@ function renderChecklistGrid(searchVal) {
             <div class="cl-insured">${esc(cl.insured)}</div>
             <div class="cl-policy">${esc(cl.policy)}</div>
           </div>
-          <span class="status-chip ${cl.status === "complete" ? "chip-complete" : "chip-draft"}">${esc(
-        cl.status
-      )}</span>
+          <span class="status-chip ${cl.status === "complete" ? "chip-complete" : "chip-draft"}">${esc(cl.status)}</span>
         </div>
         <div class="cl-meta">📅 ${esc(date)}</div>
         <div class="cl-meta">👤 ${esc(cl.user)}</div>
         <div class="cl-footer">
           <span class="cl-lob">${esc(lobDisplay)}</span>
-          <button class="icon-btn" title="Delete" onclick="event.stopPropagation();deleteChecklist('${esc(
-            cl.id
-          )}')">🗑</button>
+          <button class="icon-btn" title="Delete" onclick="event.stopPropagation();deleteChecklist('${esc(cl.id)}')">🗑</button>
         </div>
       </div>`;
     })
@@ -577,7 +593,7 @@ function setFilter(btn, filter) {
   currentFilter = filter;
   document.querySelectorAll(".cl-filter-btn").forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
-  renderChecklistGrid(document.getElementById("search-input").value);
+  renderChecklistGrid(el("search-input").value);
 }
 
 function openChecklist(id) {
@@ -603,7 +619,7 @@ async function deleteChecklist(id) {
 // ══════════════════════════════════════════
 
 function populateNewLobDropdown() {
-  const sel = document.getElementById("new-lob");
+  const sel = el("new-lob");
   if (!sel) return;
 
   sel.innerHTML = '<option value="">— Select LOB —</option>';
@@ -620,19 +636,19 @@ function populateNewLobDropdown() {
     sel.appendChild(o);
   });
 
-  sel.addEventListener("change", () => {
-    document.getElementById("new-lob-note").style.display = sel.value ? "" : "none";
-  });
+  sel.onchange = () => {
+    el("new-lob-note").style.display = sel.value ? "" : "none";
+  };
 }
 
 function createChecklist() {
-  const insured = document.getElementById("new-insured").value.trim();
-  const policy = document.getElementById("new-policy").value.trim();
-  const term = document.getElementById("new-term").value.trim();
-  const date = document.getElementById("new-date").value;
-  const checkedby = document.getElementById("new-checkedby").value.trim();
-  const am = document.getElementById("new-am").value.trim();
-  const lobVal = document.getElementById("new-lob").value;
+  const insured = el("new-insured").value.trim();
+  const policy = el("new-policy").value.trim();
+  const term = el("new-term").value.trim();
+  const date = el("new-date").value;
+  const checkedby = el("new-checkedby").value.trim();
+  const am = el("new-am").value.trim();
+  const lobVal = el("new-lob").value;
 
   if (!insured) return showToast("⚠ Insured Name is required");
   if (!lobVal) return showToast("⚠ Please select a LOB");
@@ -655,7 +671,7 @@ let _createCallback = null;
 function openLobSelectionModal(cb) {
   _createCallback = cb;
   lobModalSelectedIds = [];
-  const list = document.getElementById("new-lob-modal-list");
+  const list = el("new-lob-modal-list");
 
   list.innerHTML = ALL_LOBS.filter((l) => !l.locked)
     .map(
@@ -671,16 +687,16 @@ function openLobSelectionModal(cb) {
   openModal("new-lob-modal");
 }
 
-function toggleNewLob(lobId, el) {
+function toggleNewLob(lobId, elRow) {
   const idx = lobModalSelectedIds.indexOf(lobId);
   if (idx > -1) {
     lobModalSelectedIds.splice(idx, 1);
-    el.classList.remove("selected");
-    el.querySelector(".modal-check").style.display = "none";
+    elRow.classList.remove("selected");
+    elRow.querySelector(".modal-check").style.display = "none";
   } else {
     lobModalSelectedIds.push(lobId);
-    el.classList.add("selected");
-    el.querySelector(".modal-check").style.display = "";
+    elRow.classList.add("selected");
+    elRow.querySelector(".modal-check").style.display = "";
   }
 }
 
@@ -694,7 +710,7 @@ async function doCreateChecklist(insured, policy, term, date, checkedby, am, lob
     const lobNames = lobIds.map((id) => LOBS_BY_ID.get(id)?.name).filter(Boolean);
 
     const cl = {
-      id: null, // will be set after upsert
+      id: null,
       title: insured,
       insured,
       policy,
@@ -709,12 +725,12 @@ async function doCreateChecklist(insured, policy, term, date, checkedby, am, lob
       user: currentUser.username,
       entries: {},
       notes: "",
+      snapshots: [],
     };
 
     const newId = await upsertChecklistToDb(cl);
     cl.id = newId;
 
-    // reload list (or push optimistically)
     CHECKLISTS.unshift(cl);
     activeChecklistId = newId;
     showTab("editor");
@@ -724,23 +740,78 @@ async function doCreateChecklist(insured, policy, term, date, checkedby, am, lob
     showToast("❌ Create failed (check RLS / join table)");
   }
 }
+
 // ══════════════════════════════════════════
-// addNewLOB
+// ADMIN: Add LOB (FIXED)
 // ══════════════════════════════════════════
 
 async function addNewLOB() {
-  const name = document.querySelector("#newLobName")?.value?.trim();
-  if (!name) return alert("Enter LOB name");
+  try {
+    if (!isAdmin()) return showToast("⛔ Admin only");
 
-  const { error } = await window.supabase
-    .from("lobs")
-    .insert([{ name, is_active: true }]);
+    const nameEl = el("new-lob-name");
+    const codeEl = el("new-lob-code");
 
-  if (error) return alert(error.message);
+    const name = (nameEl?.value || "").trim();
+    const code = (codeEl?.value || "").trim().toUpperCase();
 
-  alert("LOB added");
-  // refresh dropdown/list here
+    if (!name) return showToast("⚠ Enter LOB name");
+
+    // If your lobs table does NOT have `code` column, we ignore it safely.
+    // We'll try insert with code first, then fallback without code if it errors.
+    let { error } = await supabase.from("lobs").insert([{ name, is_active: true, code }]);
+    if (error) {
+      // fallback without code if "column does not exist"
+      const msg = String(error.message || "").toLowerCase();
+      if (msg.includes("column") && msg.includes("code")) {
+        const r2 = await supabase.from("lobs").insert([{ name, is_active: true }]);
+        error = r2.error;
+      }
+    }
+    if (error) throw error;
+
+    if (nameEl) nameEl.value = "";
+    if (codeEl) codeEl.value = "";
+
+    closeModal("add-lob-modal");
+    showToast("✅ LOB added");
+
+    await loadLobsFromDb();
+    await loadLobFieldsFromDb();
+    populateNewLobDropdown();
+    renderLobManagement();
+  } catch (e) {
+    console.error(e);
+    showToast("❌ Add LOB failed (check RLS)");
+  }
 }
+
+// ══════════════════════════════════════════
+// ADMIN: Save User (FIXED - no crash)
+// ══════════════════════════════════════════
+
+async function saveUser() {
+  try {
+    if (!isAdmin()) return showToast("⛔ Admin only");
+
+    const username = el("uf-username")?.value?.trim();
+    const full_name = el("uf-fullname")?.value?.trim();
+    const email = el("uf-email")?.value?.trim();
+    const password = el("uf-password")?.value;
+    const role = el("uf-role")?.value || "user";
+
+    if (!username || !email || !password) return showToast("⚠ Username, Email, Password required");
+
+    await apiAdminCreateUser({ email, password, username, full_name, role });
+
+    closeModal("add-user-modal");
+    showToast("✅ User created");
+  } catch (e) {
+    console.error(e);
+    showToast(`❌ Create user failed`);
+  }
+}
+
 // ══════════════════════════════════════════
 // EDITOR
 // ══════════════════════════════════════════
@@ -756,19 +827,19 @@ function renderEditor() {
     return;
   }
 
-  document.getElementById("editor-title-name").textContent = cl.insured || "Checklist";
-  document.getElementById("editor-title-policy").textContent = cl.policy || "—";
-  document.getElementById("ed-insured").value = cl.insured || "";
-  document.getElementById("ed-policy").value = cl.policy || "";
-  document.getElementById("ed-term").value = cl.term || "";
-  document.getElementById("ed-date").value = cl.date || "";
-  document.getElementById("ed-checkedby").value = cl.checkedby || "";
-  document.getElementById("ed-am").value = cl.am || "";
-  document.getElementById("checklist-notes").value = cl.notes || "";
-  document.getElementById("complete-banner").style.display = cl.status === "complete" ? "" : "none";
+  el("editor-title-name").textContent = cl.insured || "Checklist";
+  el("editor-title-policy").textContent = cl.policy || "—";
+  el("ed-insured").value = cl.insured || "";
+  el("ed-policy").value = cl.policy || "";
+  el("ed-term").value = cl.term || "";
+  el("ed-date").value = cl.date || "";
+  el("ed-checkedby").value = cl.checkedby || "";
+  el("ed-am").value = cl.am || "";
+  el("checklist-notes").value = cl.notes || "";
+  el("complete-banner").style.display = cl.status === "complete" ? "" : "none";
 
-  document.getElementById("ed-lob-display").textContent = cl.lobs.join(", ");
-  document.getElementById("ed-lob-tags").innerHTML = cl.lobs.map((l) => `<span class="pkg-tag">${esc(l)}</span>`).join("");
+  el("ed-lob-display").textContent = cl.lobs.join(", ");
+  el("ed-lob-tags").innerHTML = cl.lobs.map((l) => `<span class="pkg-tag">${esc(l)}</span>`).join("");
 
   renderCoverageSections(cl);
   renderSnapshots();
@@ -779,12 +850,11 @@ function renderCoverageSections(cl) {
   if (!cl) cl = getActiveChecklist();
   if (!cl) return;
 
-  // Always include Common Declarations if exists as a LOB in DB
   const sections = [];
   if (COVERAGE_FIELDS["Common Declarations"]) sections.push("Common Declarations");
   sections.push(...cl.lobs);
 
-  const container = document.getElementById("coverage-sections");
+  const container = el("coverage-sections");
 
   container.innerHTML = sections
     .map((lobName) => {
@@ -802,7 +872,6 @@ function renderCoverageSections(cl) {
         .map((f) => {
           if (f.isHeader) return `<tr class="header-row"><td colspan="7">${esc(f.label)}</td></tr>`;
 
-          // f.id is lob_fields.id (string)
           const e = (cl.entries && cl.entries[f.id]) || {};
           const statusCls =
             { Match: "ss-match", "Not Match": "ss-notmatch", "Not Found": "ss-notfound", "N/A": "ss-na" }[
@@ -826,9 +895,7 @@ function renderCoverageSections(cl) {
               e.nex || ""
             )}" oninput="updateEntry('${esc(f.id)}','nex',this.value)" placeholder="Nexsure data" ${readonly}/></td>
             <td style="width:12%;text-align:center">
-              <select class="status-select ${statusCls}" onchange="updateStatusAndRow('${esc(
-            f.id
-          )}',this)">
+              <select class="status-select ${statusCls}" onchange="updateStatusAndRow('${esc(f.id)}',this)">
                 <option ${e.status === "Match" ? "selected" : ""}>Match</option>
                 <option ${e.status === "Not Match" ? "selected" : ""}>Not Match</option>
                 <option ${e.status === "Not Found" ? "selected" : ""}>Not Found</option>
@@ -887,7 +954,7 @@ function toggleSection(header) {
 
 let saveTimer;
 function showSaved() {
-  const ind = document.getElementById("save-indicator");
+  const ind = el("save-indicator");
   if (ind) {
     ind.innerHTML = "⟳ Saving…";
     ind.style.color = "#8b5cf6";
@@ -937,9 +1004,8 @@ function updateStatusAndRow(fId, sel) {
   cl.entries[fId].status = sel.value;
 
   const cls =
-    { Match: "ss-match", "Not Match": "ss-notmatch", "Not Found": "ss-notfound", "N/A": "ss-na" }[
-      sel.value
-    ] || "ss-na";
+    { Match: "ss-match", "Not Match": "ss-notmatch", "Not Found": "ss-notfound", "N/A": "ss-na" }[sel.value] ||
+    "ss-na";
   sel.className = "status-select " + cls;
 
   cl.updated = new Date().toISOString();
@@ -947,7 +1013,7 @@ function updateStatusAndRow(fId, sel) {
   updateProgress(cl);
   persistActiveChecklistDebounced();
 
-  const row = document.getElementById("row-" + fId);
+  const row = el("row-" + fId);
   if (row) {
     row.classList.remove("row-locked", "row-notmatch");
     const inputs = row.querySelectorAll(".cell-input");
@@ -986,8 +1052,8 @@ function updateProgress(cl) {
   });
 
   const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
-  const fill = document.getElementById("progress-fill");
-  const label = document.getElementById("progress-label");
+  const fill = el("progress-fill");
+  const label = el("progress-label");
   if (fill) fill.style.width = pct + "%";
   if (label) label.textContent = pct + "%";
 }
@@ -996,24 +1062,24 @@ function saveHeaderFields() {
   const cl = getActiveChecklist();
   if (!cl) return;
 
-  cl.insured = document.getElementById("ed-insured").value;
-  cl.policy = document.getElementById("ed-policy").value;
-  cl.term = document.getElementById("ed-term").value;
-  cl.date = document.getElementById("ed-date").value;
-  cl.checkedby = document.getElementById("ed-checkedby").value;
-  cl.am = document.getElementById("ed-am").value;
-  cl.notes = document.getElementById("checklist-notes").value;
+  cl.insured = el("ed-insured").value;
+  cl.policy = el("ed-policy").value;
+  cl.term = el("ed-term").value;
+  cl.date = el("ed-date").value;
+  cl.checkedby = el("ed-checkedby").value;
+  cl.am = el("ed-am").value;
+  cl.notes = el("checklist-notes").value;
   cl.updated = new Date().toISOString();
 
-  document.getElementById("editor-title-name").textContent = cl.insured || "Checklist";
-  document.getElementById("editor-title-policy").textContent = cl.policy || "—";
+  el("editor-title-name").textContent = cl.insured || "Checklist";
+  el("editor-title-policy").textContent = cl.policy || "—";
 
   showSaved();
   persistActiveChecklistDebounced();
 }
 
-["ed-insured", "ed-policy", "ed-term", "ed-date", "ed-checkedby", "ed-am", "checklist-notes"].forEach(
-  (id) => document.getElementById(id)?.addEventListener("input", saveHeaderFields)
+["ed-insured", "ed-policy", "ed-term", "ed-date", "ed-checkedby", "ed-am", "checklist-notes"].forEach((id) =>
+  el(id)?.addEventListener("input", saveHeaderFields)
 );
 
 async function markComplete() {
@@ -1021,11 +1087,11 @@ async function markComplete() {
   if (!cl) return;
   cl.status = "complete";
   cl.updated = new Date().toISOString();
-  document.getElementById("complete-banner").style.display = "";
+  el("complete-banner").style.display = "";
   showToast("✅ Marked as complete! (Recent shows last 5 days)");
   try {
     await upsertChecklistToDb(cl);
-    await loadChecklistsFromDb(); // refresh list
+    await loadChecklistsFromDb();
     renderDashboard();
   } catch (e) {
     console.error(e);
@@ -1057,19 +1123,18 @@ function openModal(id) {
     editorLobSelectedIds = cl ? [...(cl.lob_ids || [])] : [];
     renderLobModalList("");
   }
-  document.getElementById(id).classList.add("open");
+  el(id).classList.add("open");
 }
+
 function closeModal(id) {
-  document.getElementById(id).classList.remove("open");
+  el(id).classList.remove("open");
 }
 
 function renderLobModalList(search) {
-  const list = document.getElementById("lob-modal-list");
+  const list = el("lob-modal-list");
   if (!list) return;
 
-  const filtered = ALL_LOBS.filter(
-    (l) => !l.locked && l.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = ALL_LOBS.filter((l) => !l.locked && l.name.toLowerCase().includes((search || "").toLowerCase()));
 
   list.innerHTML = filtered
     .map((l) => {
@@ -1081,25 +1146,25 @@ function renderLobModalList(search) {
     })
     .join("");
 
-  document.getElementById("lob-modal-apply").textContent = `Apply (${editorLobSelectedIds.length} selected)`;
+  el("lob-modal-apply").textContent = `Apply (${editorLobSelectedIds.length} selected)`;
 }
 
 function filterLobModal(val) {
   renderLobModalList(val);
 }
 
-function toggleEditorLob(lobId, el) {
+function toggleEditorLob(lobId, elRow) {
   const idx = editorLobSelectedIds.indexOf(lobId);
   if (idx > -1) {
     editorLobSelectedIds.splice(idx, 1);
-    el.classList.remove("selected");
-    el.querySelector(".modal-check").style.display = "none";
+    elRow.classList.remove("selected");
+    elRow.querySelector(".modal-check").style.display = "none";
   } else {
     editorLobSelectedIds.push(lobId);
-    el.classList.add("selected");
-    el.querySelector(".modal-check").style.display = "";
+    elRow.classList.add("selected");
+    elRow.querySelector(".modal-check").style.display = "";
   }
-  document.getElementById("lob-modal-apply").textContent = `Apply (${editorLobSelectedIds.length} selected)`;
+  el("lob-modal-apply").textContent = `Apply (${editorLobSelectedIds.length} selected)`;
 }
 
 async function applyLobSelection() {
@@ -1114,8 +1179,8 @@ async function applyLobSelection() {
   cl.lob_ids = [...editorLobSelectedIds];
   cl.lobs = cl.lob_ids.map((id) => LOBS_BY_ID.get(id)?.name).filter(Boolean);
 
-  document.getElementById("ed-lob-display").textContent = cl.lobs.join(", ");
-  document.getElementById("ed-lob-tags").innerHTML = cl.lobs.map((l) => `<span class="pkg-tag">${esc(l)}</span>`).join("");
+  el("ed-lob-display").textContent = cl.lobs.join(", ");
+  el("ed-lob-tags").innerHTML = cl.lobs.map((l) => `<span class="pkg-tag">${esc(l)}</span>`).join("");
 
   renderCoverageSections(cl);
   showToast(`✓ LOBs updated: ${cl.lobs.join(", ")}`);
@@ -1131,11 +1196,11 @@ async function applyLobSelection() {
 }
 
 // ══════════════════════════════════════════
-// SNAPSHOTS (placeholder same as before)
+// SNAPSHOTS (placeholder)
 // ══════════════════════════════════════════
 
 function renderSnapshots() {
-  const container = document.getElementById("snapshots-container");
+  const container = el("snapshots-container");
   if (!container) return;
 
   if (snapshotCount === 0) {
@@ -1180,6 +1245,7 @@ function addSnapshot() {
   renderSnapshots();
   showToast("Snapshot added");
 }
+
 function deleteSnapshot() {
   if (!confirm("Delete snapshot?")) return;
   snapshotCount = Math.max(0, snapshotCount - 1);
@@ -1187,7 +1253,67 @@ function deleteSnapshot() {
 }
 
 // ══════════════════════════════════════════
-// ADMIN (DB-backed LOB management is future; for now keep message)
+// DOWNLOAD / PREVIEW / DROPDOWN (STUBS so app never crashes)
+// ══════════════════════════════════════════
+
+function toggleDropdown(id) {
+  const wrap = el(id);
+  if (!wrap) return;
+  const isOpen = wrap.classList.contains("open");
+  document.querySelectorAll(".download-dropdown-wrap.open").forEach((w) => w.classList.remove("open"));
+  if (!isOpen) wrap.classList.add("open");
+}
+
+function showPreview(mode) {
+  // Minimal: show a modal with JSON preview (you can upgrade to proper PDF later)
+  const cl = getActiveChecklist();
+  if (!cl) return;
+
+  el("preview-title").textContent =
+    mode === "excel" ? "Excel Preview" : mode === "combined" ? "Checklist + Snapshots" : "Clean Preview";
+
+  const body = el("preview-body");
+  body.innerHTML = `<div style="padding:18px">
+    <div style="font-weight:800;margin-bottom:8px">Preview (temporary)</div>
+    <pre style="white-space:pre-wrap;font-size:12px;line-height:1.4;background:rgba(255,255,255,.06);padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08)">${esc(
+      JSON.stringify({ header: { insured: cl.insured, policy: cl.policy, term: cl.term, lobs: cl.lobs }, notes: cl.notes, entries: cl.entries }, null, 2)
+    )}</pre>
+    <div style="margin-top:10px;font-size:12px;opacity:.7">We can replace this with a real PDF/Excel-style preview next.</div>
+  </div>`;
+
+  openModal("preview-modal");
+}
+
+function downloadAs(mode) {
+  // Minimal: download JSON now (no crash); later replace with PDF generator
+  const cl = getActiveChecklist();
+  if (!cl) return;
+
+  const payload = {
+    mode,
+    header: { insured: cl.insured, policy: cl.policy, term: cl.term, date: cl.date, checkedby: cl.checkedby, am: cl.am, lobs: cl.lobs },
+    notes: cl.notes,
+    entries: cl.entries,
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `checklist-${mode}-${(cl.policy || cl.insured || "export").replace(/\s+/g, "_")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  showToast("⬇ Download started (JSON temporary)");
+}
+
+function printChecklist() {
+  // Print whatever is in preview
+  window.print();
+}
+
+// ══════════════════════════════════════════
+// ADMIN (Render)
 // ══════════════════════════════════════════
 
 function renderAdmin() {
@@ -1201,33 +1327,23 @@ function renderAdminStats() {
   const completed = CHECKLISTS.filter((c) => c.status === "complete").length;
   const totalLobs = ALL_LOBS.filter((l) => !l.locked).length;
 
-  document.getElementById("admin-stat-grid").innerHTML = `
+  el("admin-stat-grid").innerHTML = `
     <div class="stat-card stat-1"><div class="stat-label">Total Checklists</div><div class="stat-value">${CHECKLISTS.length}</div><div class="stat-trend">↑ Active</div></div>
     <div class="stat-card stat-2"><div class="stat-label">Supabase Users</div><div class="stat-value">—</div><div class="stat-trend">Manage in Supabase</div></div>
     <div class="stat-card stat-3"><div class="stat-label">Completed</div><div class="stat-value">${completed}</div><div class="stat-trend">${CHECKLISTS.length - completed} drafts</div></div>
     <div class="stat-card stat-4"><div class="stat-label">LOBs Active</div><div class="stat-value">${totalLobs}</div><div class="stat-trend">+ locked COM</div></div>
   `;
 
-  const recent = [...CHECKLISTS]
-    .sort((a, b) => new Date(b.updated) - new Date(a.updated))
-    .slice(0, 5);
+  const recent = [...CHECKLISTS].sort((a, b) => new Date(b.updated) - new Date(a.updated)).slice(0, 5);
 
-  document.getElementById("admin-recent-body").innerHTML = recent
+  el("admin-recent-body").innerHTML = recent
     .map((cl) => {
-      const date = new Date(cl.updated).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
+      const date = new Date(cl.updated).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
       return `<tr>
-        <td><b>${esc(cl.insured)}</b><div style="font-size:11px;color:var(--vivid);font-family:monospace">${esc(
-        cl.policy
-      )}</div></td>
+        <td><b>${esc(cl.insured)}</b><div style="font-size:11px;color:var(--vivid);font-family:monospace">${esc(cl.policy)}</div></td>
         <td>${esc(cl.user)}</td>
         <td><span class="pkg-tag">${esc(cl.lobs.join(", "))}</span></td>
-        <td><span class="status-chip ${cl.status === "complete" ? "chip-complete" : "chip-draft"}">${esc(
-        cl.status
-      )}</span></td>
+        <td><span class="status-chip ${cl.status === "complete" ? "chip-complete" : "chip-draft"}">${esc(cl.status)}</span></td>
         <td style="color:var(--muted);font-size:12px">${esc(date)}</td>
       </tr>`;
     })
@@ -1235,19 +1351,17 @@ function renderAdminStats() {
 }
 
 function renderAdminUsers() {
-  const body = document.getElementById("admin-users-body");
-  if (body) {
-    body.innerHTML = `<tr><td colspan="6" style="padding:14px;color:var(--muted);font-size:13px">
-      Manage users inside Supabase Dashboard → Authentication → Users.<br/>
-      (Long-term best: add a secure admin API using Vercel /api + service_role key.)
-    </td></tr>`;
-  }
+  const body = el("admin-users-body");
+  if (!body) return;
+
+  body.innerHTML = `<tr><td colspan="6" style="padding:14px;color:var(--muted);font-size:13px">
+    Use “Add User” button to create users (requires /api/admin/create-user).<br/>
+    If it fails, verify Vercel env vars: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY.
+  </td></tr>`;
 }
 
 function renderLobManagement() {
-  // Long-term best: manage lobs/lob_fields via DB-backed UI.
-  // For now, keep read-only list from DB.
-  const list = document.getElementById("lob-manage-list");
+  const list = el("lob-manage-list");
   if (!list) return;
 
   list.innerHTML = ALL_LOBS
@@ -1261,7 +1375,7 @@ function renderLobManagement() {
       ${
         l.locked
           ? '<span class="lob-locked-badge">LOCKED</span>'
-          : '<span style="color:var(--muted);font-size:12px">Manage fields in Supabase (for now)</span>'
+          : `<button class="btn-sm btn-outline" style="margin-left:auto" onclick="openLobFieldsEditor(${l.id})">✏ Edit Fields</button>`
       }
     </div>
   `
@@ -1270,12 +1384,161 @@ function renderLobManagement() {
 }
 
 // ══════════════════════════════════════════
+// ADMIN: LOB FIELDS EDITOR (basic implementation)
+// ══════════════════════════════════════════
+
+async function openLobFieldsEditor(lobId) {
+  if (!isAdmin()) return showToast("⛔ Admin only");
+
+  const lob = LOBS_BY_ID.get(lobId);
+  if (!lob) return;
+
+  activeLobForFieldEdit = lobId;
+
+  // Load fields for this lob (including inactive? we keep active only for now)
+  const { data, error } = await supabase
+    .from("lob_fields")
+    .select("id, lob_id, section, label, sort_order, is_active")
+    .eq("lob_id", lobId)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.error(error);
+    return showToast("❌ Failed to load LOB fields");
+  }
+
+  // Convert to draft structure
+  lobFieldsDraft = (data || [])
+    .filter((r) => r.is_active !== false)
+    .map((r) => ({
+      id: r.id,
+      label: r.label,
+      section: r.section || "General",
+      sort_order: r.sort_order ?? 0,
+      is_header: false,
+    }));
+
+  el("lob-fields-modal-title").textContent = `Edit Fields — ${lob.name}`;
+  renderLobFieldsModal();
+  openModal("lob-fields-modal");
+}
+
+function renderLobFieldsModal() {
+  const body = el("lob-fields-modal-body");
+  if (!body) return;
+
+  if (!lobFieldsDraft.length) {
+    body.innerHTML = `<div style="padding:14px;color:var(--muted);font-size:13px">No fields yet. Click “Add Field”.</div>`;
+    return;
+  }
+
+  body.innerHTML = lobFieldsDraft
+    .map((f, idx) => {
+      return `<div class="lob-field-row" draggable="true"
+        ondragstart="lobFieldDragStart(${idx})"
+        ondragover="lobFieldDragOver(event)"
+        ondrop="lobFieldDrop(${idx})"
+        style="display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)">
+        <div style="cursor:grab;opacity:.6">⠿</div>
+        <input class="hf-input" style="flex:2" value="${esc(f.label)}" oninput="editLobField(${idx}, 'label', this.value)" />
+        <input class="hf-input" style="flex:1" value="${esc(f.section)}" oninput="editLobField(${idx}, 'section', this.value)" />
+        <button class="btn-sm btn-danger" style="padding:6px 10px" onclick="removeLobField(${idx})">🗑</button>
+      </div>`;
+    })
+    .join("");
+}
+
+function lobFieldDragStart(idx) {
+  lobFieldsDragIndex = idx;
+}
+function lobFieldDragOver(e) {
+  e.preventDefault();
+}
+function lobFieldDrop(targetIdx) {
+  const from = lobFieldsDragIndex;
+  if (from == null || from === targetIdx) return;
+  const item = lobFieldsDraft.splice(from, 1)[0];
+  lobFieldsDraft.splice(targetIdx, 0, item);
+  lobFieldsDragIndex = null;
+  renderLobFieldsModal();
+}
+
+function editLobField(idx, key, val) {
+  if (!lobFieldsDraft[idx]) return;
+  lobFieldsDraft[idx][key] = val;
+}
+
+function removeLobField(idx) {
+  lobFieldsDraft.splice(idx, 1);
+  renderLobFieldsModal();
+}
+
+function addLobField(isHeader) {
+  // We’ll treat “header” as a field that becomes a separate section label later (simple)
+  // For now, we create a field with section name and label like “—”
+  lobFieldsDraft.push({
+    id: null,
+    label: isHeader ? "Section Title" : "New Field",
+    section: isHeader ? "Section" : "General",
+    sort_order: lobFieldsDraft.length,
+    is_header: !!isHeader,
+  });
+  renderLobFieldsModal();
+}
+
+async function saveLobFields() {
+  if (!isAdmin()) return showToast("⛔ Admin only");
+  if (!activeLobForFieldEdit) return;
+
+  try {
+    // Recompute sort_order
+    const rows = lobFieldsDraft.map((f, i) => ({
+      id: f.id || undefined,
+      lob_id: activeLobForFieldEdit,
+      label: String(f.label || "").trim(),
+      section: String(f.section || "General").trim(),
+      sort_order: i + 1,
+      is_active: true,
+    })).filter(r => r.label);
+
+    // Soft-delete existing then insert fresh (simple reliable)
+    await supabase.from("lob_fields").update({ is_active: false }).eq("lob_id", activeLobForFieldEdit);
+
+    if (rows.length) {
+      const { error } = await supabase.from("lob_fields").insert(rows);
+      if (error) throw error;
+    }
+
+    closeModal("lob-fields-modal");
+    showToast("✅ Fields saved");
+
+    await loadLobFieldsFromDb();
+    if (activeChecklistId) renderEditor();
+    renderLobManagement();
+  } catch (e) {
+    console.error(e);
+    showToast("❌ Save fields failed (check RLS)");
+  }
+}
+
+// ══════════════════════════════════════════
+// CREDENTIALS (optional/local only)
+// ══════════════════════════════════════════
+
+function saveCredentials() {
+  const u = el("cred-username")?.value || "";
+  const p = el("cred-password")?.value || "";
+  localStorage.setItem("ss_admin_creds", JSON.stringify({ u, p }));
+  showToast("✅ Credentials saved (local)");
+}
+
+// ══════════════════════════════════════════
 // TOAST
 // ══════════════════════════════════════════
 
 let toastTimer;
 function showToast(msg) {
-  const t = document.getElementById("toast");
+  const t = el("toast");
   if (!t) return;
   t.textContent = msg;
   t.classList.add("show");
@@ -1323,7 +1586,22 @@ document.querySelectorAll(".modal-overlay").forEach((overlay) => {
   });
 });
 
+// Close dropdowns on outside click
+document.addEventListener("click", (e) => {
+  const inside = e.target.closest(".download-dropdown-wrap");
+  if (!inside) document.querySelectorAll(".download-dropdown-wrap.open").forEach((w) => w.classList.remove("open"));
+});
+
+// Search input binding (keep existing HTML inline oninput too, but this helps)
+el("search-input")?.addEventListener("input", (e) => renderChecklistGrid(e.target.value));
+
+// LOB modal search binding
+el("lob-modal-search")?.addEventListener("input", (e) => filterLobModal(e.target.value));
+
+// ══════════════════════════════════════════
 // --- Expose functions used by inline HTML handlers ---
+// ══════════════════════════════════════════
+
 window.doLogin = doLogin;
 window.doLogout = doLogout;
 
@@ -1356,5 +1634,23 @@ window.resetEditor = resetEditor;
 window.addSnapshot = addSnapshot;
 window.deleteSnapshot = deleteSnapshot;
 
+window.toggleDropdown = toggleDropdown;
+window.showPreview = showPreview;
+window.downloadAs = downloadAs;
+window.printChecklist = printChecklist;
+
 window.addNewLOB = addNewLOB;
 window.saveUser = saveUser;
+
+window.saveCredentials = saveCredentials;
+
+window.openLobFieldsEditor = openLobFieldsEditor;
+window.addLobField = addLobField;
+window.saveLobFields = saveLobFields;
+
+// for drag & edit functions
+window.lobFieldDragStart = lobFieldDragStart;
+window.lobFieldDragOver = lobFieldDragOver;
+window.lobFieldDrop = lobFieldDrop;
+window.editLobField = editLobField;
+window.removeLobField = removeLobField;
