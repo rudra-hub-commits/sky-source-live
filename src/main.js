@@ -203,6 +203,30 @@ async function loadChecklistsFromDb() {
 }
 
 // ══════════════════════════════════════════
+// Add users
+// ══════════════════════════════════════════
+
+
+async function apiAdminCreateUser({ email, password, username, full_name, role }) {
+  const { data: sess } = await supabase.auth.getSession();
+  const accessToken = sess?.session?.access_token;
+  if (!accessToken) throw new Error("No session token");
+
+  const resp = await fetch("/api/admin/create-user", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ email, password, username, full_name, role }),
+  });
+
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(json?.error || "Create user failed");
+  return json;
+}
+
+// ══════════════════════════════════════════
 // DB: WRITERS
 // ══════════════════════════════════════════
 
