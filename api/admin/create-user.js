@@ -65,3 +65,42 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: e?.message || "Server error" });
   }
 }
+
+import { supabaseAdmin, requireAdmin } from "../_utils/admin";
+
+export default async function handler(req, res) {
+  try {
+    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+    const adminCheck = await requireAdmin(req);
+    if (!adminCheck.ok) return res.status(adminCheck.status).json({ error: adminCheck.error });
+
+    const { email, password, role = "user", username = null, full_name = null } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: "email and password are required" });
+
+    // Create auth user
+    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    if (createErr) return res.status(400).json({ error: createErr.message });
+
+    const userId = created?.user?.id;
+
+    // Create/Upsert profile
+    const { error: profErr } = await supabaseAdmin.from("profiles").upsert({
+      id: userId,
+      email,
+      role,
+      username,
+      full_name,
+    });
+
+    if (profErr) return res.status(400).json({ error: profErr.message });
+
+    return res.json({ success: true, userId });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || "Server error" });
+  }
+}
