@@ -4,25 +4,22 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { username } = req.body || {};
-    if (!username) return res.status(400).json({ error: "username is required" });
+    const { loginId } = req.body || {};
+    if (!loginId) return res.status(400).json({ error: "loginId required" });
 
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseAdmin = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-    if (!supabaseUrl || !serviceKey) {
-      return res.status(500).json({ error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" });
-    }
+    // If user typed email, return it directly
+    if (String(loginId).includes("@")) return res.status(200).json({ email: loginId });
 
-    const admin = createClient(supabaseUrl, serviceKey);
-
-    const { data, error } = await admin
+    // Otherwise resolve username -> email
+    const { data, error } = await supabaseAdmin
       .from("profiles")
       .select("email")
-      .ilike("username", username.trim())
+      .ilike("username", loginId)
       .single();
 
-    if (error || !data?.email) return res.status(404).json({ error: "User not found" });
+    if (error || !data?.email) return res.status(404).json({ error: "Username not found" });
 
     return res.status(200).json({ email: data.email });
   } catch (e) {
