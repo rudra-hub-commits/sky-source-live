@@ -1,5 +1,44 @@
 import { createClient } from "@supabase/supabase-js";
-import jwt from "jsonwebtoken";
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+export default async function handler(req, res) {
+  try {
+    const token = req.headers.authorization?.replace("Bearer ", "");
+    if (!token) return res.status(401).json({ error: "Missing token" });
+
+    // ✅ Verify user using Supabase
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !user) return res.status(401).json({ error: "Invalid user" });
+
+    // ✅ Check admin role
+    const { data: profile } = await supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    if (profile.role !== "admin") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    // ✅ Update role
+    const { userId, role } = req.body;
+
+    await supabaseAdmin
+      .from("profiles")
+      .update({ role })
+      .eq("id", userId);
+
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
 
 function getBearerToken(req) {
   const h = req.headers.authorization || "";
@@ -43,4 +82,5 @@ export default async function handler(req, res) {
   } catch (e) {
     return res.status(500).json({ error: e.message || "Server error" });
   }
+
 }
