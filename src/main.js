@@ -3,7 +3,10 @@ console.log("SUPABASE BUILD ACTIVE");
 
 import "./style.css";
 import { supabase } from "./supabaseClient";
+
+// DEBUG
 window.supabase = supabase;
+console.log("✅ window.supabase set", supabase);
 // ══════════════════════════════════════════
 // HELPERS
 // ══════════════════════════════════════════
