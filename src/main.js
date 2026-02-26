@@ -724,7 +724,23 @@ async function doCreateChecklist(insured, policy, term, date, checkedby, am, lob
     showToast("❌ Create failed (check RLS / join table)");
   }
 }
+// ══════════════════════════════════════════
+// addNewLOB
+// ══════════════════════════════════════════
 
+async function addNewLOB() {
+  const name = document.querySelector("#newLobName")?.value?.trim();
+  if (!name) return alert("Enter LOB name");
+
+  const { error } = await window.supabase
+    .from("lobs")
+    .insert([{ name, is_active: true }]);
+
+  if (error) return alert(error.message);
+
+  alert("LOB added");
+  // refresh dropdown/list here
+}
 // ══════════════════════════════════════════
 // EDITOR
 // ══════════════════════════════════════════
@@ -1339,3 +1355,6 @@ window.resetEditor = resetEditor;
 
 window.addSnapshot = addSnapshot;
 window.deleteSnapshot = deleteSnapshot;
+
+window.addNewLOB = addNewLOB;
+window.saveUser = saveUser;
