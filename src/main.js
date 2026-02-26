@@ -118,7 +118,8 @@ async function loadLobsFromDb() {
     id: l.id,
     name: l.name,
     is_active: l.is_active,
-    locked: String(l.name).toLowerCase() === "common declarations", // lock Common Declarations
+    - locked: String(l.name).toLowerCase() === "common declarations",
++ locked: String(l.name).trim().toLowerCase() === "common declarations", // lock Common Declarations
     code: (l.name || "").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 4),
   }));
 
@@ -134,7 +135,8 @@ async function loadLobFieldsFromDb() {
 
   if (error) throw error;
 
-  COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || {});
+- COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || {});
++ COVERAGE_FIELDS = buildCoverageFieldsFromDb(LOBS_BY_ID, data || []);
 }
 
 async function loadChecklistsFromDb() {
