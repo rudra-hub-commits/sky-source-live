@@ -1193,6 +1193,38 @@ async function initAuth() {
 
 initAuth();
 
+async function saveUser() {
+  const email = document.getElementById("uf-email").value;
+  const password = document.getElementById("uf-password").value;
+  const username = document.getElementById("uf-username").value;
+  const full_name = document.getElementById("uf-fullname").value;
+  const role = document.getElementById("uf-role").value;
+
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session.access_token;
+
+    const res = await fetch("/api/admin/create-user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ email, password, username, full_name, role }),
+    });
+
+    const json = await res.json();
+
+    if (!res.ok) throw new Error(json.error);
+
+    showToast("✅ User created");
+    closeModal("add-user-modal");
+  } catch (e) {
+    console.error(e);
+    showToast("❌ Failed to create user");
+  }
+}
+
 /* ──────────────────────────────────────────────
    Expose ONLY existing functions to HTML inline handlers
 ────────────────────────────────────────────── */
