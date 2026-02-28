@@ -1,64 +1,37 @@
 import { supabaseAdmin, requireAdmin } from "../utils/admin";
 
-export const config = { runtime: "nodejs" };
-
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method not allowed" });
-    }
+    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
     const admin = await requireAdmin(req);
-    if (!admin?.ok) {
-      return res.status(admin?.status || 401).json({ error: admin?.error || "Unauthorized" });
-    }
+    if (!admin.ok) return res.status(admin.status).json({ error: admin.error });
 
-    const {
-      email,
-      password,
-      role = "user",
-      username = null,
-      full_name = null,
-    } = req.body || {};
+    const { email, password, username, full_name, role = "user" } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: "email and password required" });
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "email and password required" });
-    }
-
-    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
     });
 
-    if (createErr) {
-      return res.status(400).json({ error: createErr.message });
-    }
+    if (error) return res.status(400).json({ error: error.message });
 
-    const userId = created?.user?.id;
-    if (!userId) return res.status(500).json({ error: "User created but missing user id" });
-
-    const { error: profErr } = await supabaseAdmin.from("profiles").upsert({
-      id: userId,
+    // write profile
+    const { error: pErr } = await supabaseAdmin.from("profiles").upsert({
+      id: data.user.id,
       email,
+      username: username || null,
+      full_name: full_name || null,
       role,
-      username,
-      full_name,
-      updated_at: new Date().toISOString(),
     });
 
-    if (profErr) {
-      // rollback (optional)
-      await supabaseAdmin.auth.admin.deleteUser(userId);
-      return res.status(400).json({ error: `profiles upsert failed: ${profErr.message}` });
-    }
+    if (pErr) return res.status(400).json({ error: pErr.message });
 
-    return res.json({ success: true, userId, email, role, username, full_name });
+    return res.json({ success: true, userId: data.user.id });
   } catch (e) {
-    console.error("create-user fatal:", e);
-    return res.status(500).json({
-      error: "Internal Server Error",
-      detail: e?.message || String(e),
-    });
+    console.error("create-user crash:", e);
+    return res.status(500).json({ error: String(e?.message || e) });
   }
 }
